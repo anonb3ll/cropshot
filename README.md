@@ -30,7 +30,7 @@ a scaled (HiDPI) monitor keep the monitor's full native resolution.
 ## Install
 
 ```bash
-git clone <this repo> ~/dev/cropshot   # or use it where it is
+git clone https://github.com/anonb3ll/cropshot ~/dev/cropshot
 ~/dev/cropshot/install.sh
 ```
 
