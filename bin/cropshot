@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# cropshot: macOS Cmd+Shift+4 style screenshots for Omarchy (Hyprland).
+#
+# Drag to capture a region, or click a window to capture that window. Esc
+# cancels. The screen is frozen while you select, the shot is saved under a
+# timestamped name, copied to the clipboard, and announced with a thumbnail.
+
+set -euo pipefail
+
+readonly VERSION="0.1.0"
+readonly CONFIG_FILE="${CROPSHOT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/cropshot/config}"
+readonly THEME_COLORS="${CROPSHOT_THEME_COLORS:-$HOME/.local/state/omarchy/current/theme/colors.toml}"
+
+usage() {
+  cat <<'EOF'
+Usage: cropshot [mode] [options]
+
+Modes:
+  region        Drag a region or click a window (default, like Cmd+Shift+4)
+  window        Click a window
+  screen        Capture the monitor under the cursor (like Cmd+Shift+3)
+
+Options:
+  -d, --dir DIR     Save directory (default: ~/pics/screenshot)
+  -c, --clipboard   Copy to the clipboard only, do not save (like Ctrl+Cmd+Shift+4)
+      --no-copy     Save without copying to the clipboard
+      --no-notify   Do not show a notification
+      --no-freeze   Do not freeze the screen while selecting
+  -p, --print       Print the saved file path on stdout
+  -h, --help        Show this help
+  -V, --version     Show the version
+
+Settings come from flags, then CROPSHOT_* environment variables, then
+~/.config/cropshot/config (KEY=value lines: dir, copy, notify, freeze).
+Exit codes: 0 saved or copied, 1 capture failed, 2 usage error, 130 cancelled.
+EOF
+}
+
+die() {
+  echo "cropshot: $*" >&2
+  exit 1
+}
+
+# Parse the config file as data (never sourced): KEY=value, # comments.
+config_get() {
+  local key=$1 line k v
+  [[ -r $CONFIG_FILE ]] || return 1
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%%#*}
+    [[ $line == *=* ]] || continue
+    k=${line%%=*}
+    v=${line#*=}
+    k=${k//[[:space:]]/}
+    v="${v#"${v%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    v=${v#\"}
+    v=${v%\"}
+    if [[ $k == "$key" ]]; then
+      printf '%s\n' "$v"
+      return 0
+    fi
+  done <"$CONFIG_FILE"
+  return 1
+}
+
+is_true() {
+  case ${1,,} in
+  1 | true | yes | on) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+expand_home() {
+  local p=$1
+  [[ $p == "~" ]] && p=$HOME
+  # shellcheck disable=SC2088 # matching a literal tilde on purpose
+  [[ $p == "~/"* ]] && p="$HOME/${p#\~/}"
+  printf '%s\n' "$p"
+}
+
+# Next free name in DIR: Screenshot_2026-10-29_14-03-22.png, then _2, _3, ...
+unique_path() {
+  local dir=$1 stamp=$2 base candidate n=2
+  base="$dir/Screenshot_${stamp}"
+  candidate="${base}.png"
+  while [[ -e $candidate ]]; do
+    candidate="${base}_${n}.png"
+    n=$((n + 1))
+  done
+  printf '%s\n' "$candidate"
+}
+
+theme_accent() {
+  local hex
+  if [[ -r $THEME_COLORS ]]; then
+    hex=$(sed -nE 's/^[[:space:]]*accent[[:space:]]*=[[:space:]]*"?#?([0-9A-Fa-f]{6})"?.*/\1/p' "$THEME_COLORS" | head -n1)
+  fi
+  printf '%s\n' "${hex:-89b4fa}"
+}
+
+# Boxes for every visible window on the monitors' active workspaces, in the
+# "x,y wxh" format slurp reads from stdin.
+window_boxes() {
+  local monitors clients
+  monitors=$(hyprctl monitors -j 2>/dev/null) || return 0
+  clients=$(hyprctl clients -j 2>/dev/null) || return 0
+  jq -r --argjson mons "$monitors" '
+    ([$mons[] | .activeWorkspace.id, (.specialWorkspace.id | select(. != 0))]) as $ws
+    | .[]
+    | select(.mapped and (.hidden | not))
+    | select(.workspace.id as $id | $ws | index($id))
+    | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"
+  ' <<<"$clients"
+}
+
+# The monitor under the cursor, as "x,y wxh" in logical pixels.
+cursor_monitor_box() {
+  local pos
+  pos=$(hyprctl cursorpos -j 2>/dev/null) || return 1
+  hyprctl monitors -j | jq -r --argjson p "$pos" '
+    map(. + {lw: ((if .transform % 2 == 1 then .height else .width end) / .scale | floor),
+             lh: ((if .transform % 2 == 1 then .width else .height end) / .scale | floor)})
+    | (map(select($p.x >= .x and $p.x < .x + .lw and $p.y >= .y and $p.y < .y + .lh)) | first) // first
+    | "\(.x),\(.y) \(.lw)x\(.lh)"
+  '
+}
+
+freeze_pid=""
+tmp_file=""
+cleanup() {
+  if [[ -n $freeze_pid ]]; then
+    kill "$freeze_pid" 2>/dev/null || true
+    wait "$freeze_pid" 2>/dev/null || true
+  fi
+  [[ -n $tmp_file ]] && rm -f "$tmp_file"
+  return 0
+}
+trap cleanup EXIT
+
+start_freeze() {
+  command -v hyprpicker >/dev/null || return 0
+  hyprpicker -r -z >/dev/null 2>&1 &
+  freeze_pid=$!
+  sleep "${CROPSHOT_FREEZE_DELAY:-0.12}"
+}
+
+notify_saved() {
+  local path=$1 copied=$2 headline body
+  command -v omarchy-notification-send >/dev/null || return 0
+  if [[ -n $path ]]; then
+    headline="Screenshot saved"
+    body="${path/#$HOME/\~}"
+    ((copied)) && body+=" (copied)"
+    omarchy-notification-send --app-name cropshot -g 󰹑 -t 6000 --image "$path" \
+      "$headline" "$body" \
+      --action Open xdg-open \
+      --action Edit omasnap --file \
+      --action "Show in folder" nautilus --select \
+      --with "$path" >/dev/null 2>&1 || true
+  else
+    omarchy-notification-send --app-name cropshot -g 󰹑 -t 3000 \
+      "Screenshot copied" "Copied to the clipboard" >/dev/null 2>&1 || true
+  fi
+}
+
+main() {
+  local mode=region dir="" copy="" notify="" freeze="" clipboard_only=0 print_path=0
+
+  while (($# > 0)); do
+    case $1 in
+    region | window | screen) mode=$1 ;;
+    -d | --dir)
+      (($# >= 2)) || { usage >&2; exit 2; }
+      dir=$2
+      shift
+      ;;
+    --dir=*) dir=${1#*=} ;;
+    -c | --clipboard) clipboard_only=1 ;;
+    --no-copy) copy=0 ;;
+    --no-notify) notify=0 ;;
+    --no-freeze) freeze=0 ;;
+    -p | --print) print_path=1 ;;
+    -h | --help) usage; exit 0 ;;
+    -V | --version) echo "cropshot $VERSION"; exit 0 ;;
+    *)
+      echo "cropshot: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    esac
+    shift
+  done
+
+  [[ -n $dir ]] || dir=${CROPSHOT_DIR:-$(config_get dir || echo "$HOME/pics/screenshot")}
+  [[ -n $copy ]] || copy=${CROPSHOT_COPY:-$(config_get copy || echo true)}
+  [[ -n $notify ]] || notify=${CROPSHOT_NOTIFY:-$(config_get notify || echo true)}
+  [[ -n $freeze ]] || freeze=${CROPSHOT_FREEZE:-$(config_get freeze || echo true)}
+  dir=$(expand_home "$dir")
+
+  local dep
+  for dep in grim slurp hyprctl jq; do
+    command -v "$dep" >/dev/null || die "missing dependency: $dep"
+  done
+
+  # Only one selection at a time; a second press while selecting is a no-op.
+  if pgrep -x slurp >/dev/null 2>&1; then
+    exit 0
+  fi
+
+  is_true "$freeze" && start_freeze
+
+  local geometry accent boxes
+  if [[ $mode == screen ]]; then
+    geometry=$(cursor_monitor_box) || die "could not find the focused monitor"
+  else
+    accent=$(theme_accent)
+    local slurp_args=(-d -w 2 -c "${accent}ff" -s "${accent}22" -B "${accent}18" -b 00000055 -F monospace)
+    boxes=$(window_boxes)
+    [[ $mode == window ]] && slurp_args+=(-r)
+    geometry=$(slurp "${slurp_args[@]}" <<<"$boxes" 2>/dev/null) || exit 130
+  fi
+
+  # A bare click outside any window selects a zero-size point: treat as cancel.
+  if [[ ! $geometry =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] ||
+    ((BASH_REMATCH[3] < 2 || BASH_REMATCH[4] < 2)); then
+    exit 130
+  fi
+
+  tmp_file=$(mktemp --suffix=.png "${TMPDIR:-/tmp}/cropshot.XXXXXX")
+  grim -g "$geometry" "$tmp_file" || die "grim failed to capture $geometry"
+
+  if [[ -n $freeze_pid ]]; then
+    kill "$freeze_pid" 2>/dev/null || true
+    wait "$freeze_pid" 2>/dev/null || true
+    freeze_pid=""
+  fi
+
+  local copied=0 out=""
+  if ((clipboard_only)) || is_true "$copy"; then
+    if command -v wl-copy >/dev/null; then
+      wl-copy --type image/png <"$tmp_file" && copied=1
+    elif ((clipboard_only)); then
+      die "wl-copy is required for --clipboard"
+    fi
+  fi
+
+  if ((!clipboard_only)); then
+    mkdir -p "$dir" && [[ -w $dir ]] || die "cannot write to $dir"
+    local stamp
+    stamp=$(date +%Y-%m-%d_%H-%M-%S)
+    # mv -n never overwrites; if another shot claimed the name first, retry.
+    while [[ -e $tmp_file ]]; do
+      out=$(unique_path "$dir" "$stamp")
+      mv -n "$tmp_file" "$out" 2>/dev/null || true
+    done
+    tmp_file=""
+    ((print_path)) && printf '%s\n' "$out"
+  fi
+
+  is_true "$notify" && notify_saved "$out" "$copied"
+  return 0
+}
+
+main "$@"

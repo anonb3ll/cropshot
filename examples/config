@@ -1,0 +1,14 @@
+# ~/.config/cropshot/config — KEY=value, read as data (never sourced).
+# Flags override CROPSHOT_* environment variables, which override this file.
+
+# Where saved screenshots go.
+dir = ~/pics/screenshot
+
+# Also copy each saved shot to the clipboard.
+copy = true
+
+# Show a notification with a thumbnail and Open / Edit / Show in folder.
+notify = true
+
+# Freeze the screen while you select, so menus and hovers stay put.
+freeze = true
