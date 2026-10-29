@@ -7,7 +7,7 @@ import qs.Ui
 // the monitor, middle-click copies a region without saving it.
 BarWidget {
   id: root
-  moduleName: "anonb3ll.cropshot"
+  moduleName: "io.github.anonb3ll.cropshot"
 
   readonly property string script: decodeURIComponent(String(Qt.resolvedUrl("bin/cropshot")).replace(/^file:\/\//, ""))
 

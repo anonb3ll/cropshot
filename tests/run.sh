@@ -262,6 +262,22 @@ check "uninstall removes the link" test ! -e "$work/home/.local/bin/cropshot"
 check "uninstall removes the block" bash -c '! grep -q cropshot "$1"' _ "$bindings"
 check "uninstall keeps user bindings" grep -q 'SUPER + B' "$bindings"
 
+# --- shell plugin ---------------------------------------------------------
+
+manifest="$repo/manifest.json"
+check "manifest is valid JSON" jq empty "$manifest"
+check "manifest version matches the command" \
+  test "$(jq -r .version "$manifest")" = "$(run --version | awk '{print $2}')"
+check "bar widget moduleName matches the plugin id" \
+  grep -q "moduleName: \"$(jq -r .id "$manifest")\"" "$repo/BarWidget.qml"
+for method in region window screen clipboard; do
+  check "service exposes cropshot.$method" grep -q "function $method(): void" "$repo/Service.qml"
+done
+check "no symlinks in the plugin folder" test -z "$(find "$repo" -name .git -prune -o -type l -print)"
+if command -v omarchy-plugin-validate >/dev/null; then
+  check "omarchy plugin validate passes" omarchy-plugin-validate "$repo"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 ((fail == 0))

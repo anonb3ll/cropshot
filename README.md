@@ -1,9 +1,13 @@
-# cropshot
+# Cropshot
 
 macOS-style screenshots for [Omarchy](https://omarchy.org) (Hyprland).
 Press a key, drag a box, and you get a timestamped PNG in `~/pics/screenshot/`.
 
-| Key | Does | macOS equivalent |
+Cropshot is an Omarchy shell plugin. It adds a camera button to the bar and a
+`cropshot` IPC target for keybindings. It also ships a standalone `cropshot`
+command, so you can use it without the shell.
+
+| Key (suggested) | Does | macOS equivalent |
 |---|---|---|
 | `ALT + SHIFT + 4` | Drag a region, or click a window. Saves and copies it. | `Cmd + Shift + 4` |
 | `ALT + CTRL + SHIFT + 4` | Same selection, clipboard only | `Ctrl + Cmd + Shift + 4` |
@@ -29,6 +33,38 @@ a scaled (HiDPI) monitor keep the monitor's full native resolution.
 
 ## Install
 
+### As an Omarchy plugin
+
+```bash
+omarchy plugin add https://github.com/anonb3ll/cropshot --enable
+```
+
+This clones the plugin into `~/.config/omarchy/plugins/io.github.anonb3ll.cropshot/`,
+starts its service and puts the bar button in the bar. Bar button actions:
+left-click for a region, right-click for the monitor, middle-click to copy only.
+
+The plugin never edits your configuration on its own. To get the keyboard
+shortcuts, choose one of the following.
+
+**Add the lines yourself** to `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("ALT + SHIFT + 4", "Cropped screenshot", { ipc = "cropshot.region" })
+o.bind("ALT + CTRL + SHIFT + 4", "Cropped screenshot to clipboard", { ipc = "cropshot.clipboard" })
+o.bind("ALT + SHIFT + 3", "Screenshot of monitor", { ipc = "cropshot.screen" })
+```
+
+**Or let the installer add them**, in a marked block with a backup of your file:
+
+```bash
+~/.config/omarchy/plugins/io.github.anonb3ll.cropshot/install.sh
+```
+
+The IPC methods are `region`, `window`, `screen` and `clipboard`. Test one from
+a terminal with `omarchy-shell cropshot region`.
+
+### Standalone, without the shell plugin
+
 ```bash
 git clone https://github.com/anonb3ll/cropshot ~/dev/cropshot
 ~/dev/cropshot/install.sh
@@ -45,17 +81,33 @@ Running it again is safe, because it replaces its own block. Other options:
 
 ```bash
 ./install.sh --no-bind      # command only, no keybindings
-./install.sh --uninstall    # remove the link and the block; screenshots are kept
 CROPSHOT_KEY_REGION="SUPER + SHIFT + 4" ./install.sh   # pick your own keys
 ```
 
-If you rebind `SUPER + SHIFT + 4`, also add `hl.unbind("SUPER + SHIFT + 4")`
-above the cropshot block. Otherwise both actions fire.
+If you bind `SUPER + SHIFT + 4`, also add `hl.unbind("SUPER + SHIFT + 4")`
+above the binding. Otherwise both actions fire.
 
-Dependencies, all stock on Omarchy: `grim`, `slurp`, `hyprctl`, `jq`,
-`wl-copy`, `hyprpicker` (for the freeze) and `omarchy-notification-send`.
+## Remove
 
-## Use
+```bash
+# If you ran install.sh: remove the command link and the keybinding block
+~/.config/omarchy/plugins/io.github.anonb3ll.cropshot/install.sh --uninstall
+
+# Remove the plugin
+omarchy plugin remove io.github.anonb3ll.cropshot
+```
+
+If you added the `o.bind` lines by hand, delete them from
+`~/.config/hypr/bindings.lua`. Removal keeps your screenshots.
+
+## Dependencies
+
+All of these ship with Omarchy: `grim`, `slurp`, `hyprctl`, `jq`, `wl-copy`,
+`hyprpicker` (for the screen freeze), `omarchy-notification-send`, plus
+`xdg-open`, `nautilus` and `omasnap` for the notification buttons. If one is
+missing, install it with `omarchy pkg add <name>`.
+
+## Use the command directly
 
 ```text
 cropshot [region|window|screen] [options]
@@ -86,4 +138,9 @@ tests/run.sh
 ```
 
 The suite stubs every external tool, so it runs headless and never touches
-your screen, clipboard or Hyprland config.
+your screen, clipboard or Hyprland config. When `omarchy` is installed, it
+also validates the plugin manifest.
+
+## License
+
+[MIT](LICENSE)
