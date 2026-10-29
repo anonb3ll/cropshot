@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-readonly VERSION="0.1.0"
+readonly VERSION="0.2.0"
 readonly CONFIG_FILE="${CROPSHOT_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/cropshot/config}"
 readonly THEME_COLORS="${CROPSHOT_THEME_COLORS:-$HOME/.local/state/omarchy/current/theme/colors.toml}"
 

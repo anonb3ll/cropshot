@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "anonb3ll.cropshot",
+  "name": "Cropshot",
+  "version": "0.2.0",
+  "author": "anonb3ll",
+  "description": "macOS-style Cmd+Shift+4 screenshots: drag a region or click a window, saved with a timestamp and copied to the clipboard",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Cropshot",
+    "description": "Screenshot button: click for a region, right-click for the monitor, middle-click to copy only",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
